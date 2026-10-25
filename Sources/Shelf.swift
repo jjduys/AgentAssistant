@@ -21,11 +21,14 @@ final class ShelfController: NSWindowController {
     var deleteFile: ((URL) -> Void)?
     var importFiles: (([URL]) -> Void)?
     var paste: (() -> Void)?
+    var addMenu: NSMenu?
     var isStatusBarEvent: ((NSEvent) -> Bool)?
     var isPointerOverTrigger: (() -> Bool)?
     private let canvas = ShelfCanvas()
     private let scrollView = NSScrollView()
     private let cards = NSView()
+    private let addButton = NSButton()
+    private var showingAddMenu = false
     private let empty = NSTextField(labelWithString: "拖入文件，或按 ⌘V 粘贴")
     private var dismissTimer: Timer?
     private var dismissal = ShelfDismissalPolicy()
@@ -44,10 +47,12 @@ final class ShelfController: NSWindowController {
         canvas.onDrop = { [weak self] urls in self?.importFiles?(urls) }; canvas.onPaste = { [weak self] in self?.paste?() }
         scrollView.translatesAutoresizingMaskIntoConstraints = false; scrollView.drawsBackground = false; scrollView.scrollerStyle = .overlay; scrollView.hasHorizontalScroller = true; scrollView.hasVerticalScroller = false; scrollView.autohidesScrollers = true; scrollView.documentView = cards
         canvas.addSubview(scrollView)
+        addButton.translatesAutoresizingMaskIntoConstraints = false; addButton.image = NSImage(systemSymbolName: "plus.circle.fill", accessibilityDescription: "添加"); addButton.contentTintColor = .white; addButton.isBordered = false; addButton.toolTip = "添加：新建文档或导入文件"; addButton.setAccessibilityLabel("添加"); addButton.target = self; addButton.action = #selector(showAddMenu); canvas.addSubview(addButton)
         empty.translatesAutoresizingMaskIntoConstraints = false; empty.font = .systemFont(ofSize: 11, weight: .medium); empty.textColor = .white.withAlphaComponent(0.65); canvas.addSubview(empty)
         NSLayoutConstraint.activate([
-            scrollView.topAnchor.constraint(equalTo: canvas.topAnchor, constant: 4), scrollView.leadingAnchor.constraint(equalTo: canvas.leadingAnchor, constant: 12), scrollView.trailingAnchor.constraint(equalTo: canvas.trailingAnchor, constant: -12), scrollView.bottomAnchor.constraint(equalTo: canvas.bottomAnchor, constant: -4),
-            empty.centerXAnchor.constraint(equalTo: canvas.centerXAnchor), empty.centerYAnchor.constraint(equalTo: scrollView.centerYAnchor)
+            scrollView.topAnchor.constraint(equalTo: canvas.topAnchor, constant: 4), scrollView.leadingAnchor.constraint(equalTo: canvas.leadingAnchor, constant: 12), scrollView.trailingAnchor.constraint(equalTo: addButton.leadingAnchor, constant: -12), scrollView.bottomAnchor.constraint(equalTo: canvas.bottomAnchor, constant: -4),
+            addButton.trailingAnchor.constraint(equalTo: canvas.trailingAnchor, constant: -12), addButton.centerYAnchor.constraint(equalTo: scrollView.centerYAnchor), addButton.widthAnchor.constraint(equalToConstant: 28), addButton.heightAnchor.constraint(equalToConstant: 28),
+            empty.centerXAnchor.constraint(equalTo: scrollView.centerXAnchor), empty.centerYAnchor.constraint(equalTo: scrollView.centerYAnchor)
         ])
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -65,7 +70,7 @@ final class ShelfController: NSWindowController {
             localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown, .keyDown]) { [weak self] event in
                 guard let self, self.window?.isVisible == true else { return event }
                 if event.type == .keyDown, event.window === self.window, event.modifierFlags.contains(.command), event.charactersIgnoringModifiers?.lowercased() == "v" { self.paste?(); return nil }
-                if event.type != .keyDown && event.window !== self.window && !(self.isStatusBarEvent?(event) ?? false) { self.hideShelf() }
+                if !self.showingAddMenu && event.type != .keyDown && event.window !== self.window && !(self.isStatusBarEvent?(event) ?? false) { self.hideShelf() }
                 return event
             }
         }
@@ -86,8 +91,14 @@ final class ShelfController: NSWindowController {
             card.open = { [weak self] in self?.openFile?(file.url) }; card.remove = { [weak self] in self?.deleteFile?(file.url) }; cards.addSubview(card)
         }
     }
+    @objc private func showAddMenu() {
+        guard let addMenu else { return }
+        showingAddMenu = true; dismissal = ShelfDismissalPolicy()
+        defer { showingAddMenu = false; updateDismissal() }
+        addMenu.popUp(positioning: nil, at: NSPoint(x: 0, y: addButton.bounds.minY), in: addButton)
+    }
     private func updateDismissal() {
-        guard let window, window.isVisible else { return }
+        guard let window, window.isVisible, !showingAddMenu else { return }
         if dragActive && NSEvent.pressedMouseButtons == 0 { dragActive = false }
         dismissal.update(inside: window.frame.contains(NSEvent.mouseLocation) || (isPointerOverTrigger?() ?? false), dragging: dragActive, now: Date())
         if dismissal.shouldDismiss(at: Date()) { hideShelf() }

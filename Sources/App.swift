@@ -21,6 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         shelf.openFile = { [weak self] in self?.openFile($0) }; shelf.deleteFile = { [weak self] in self?.deleteFile($0) }
         shelf.importFiles = { [weak self] urls in if urls.isEmpty { self?.chooseFiles() } else { self?.importFiles(urls) } }
         shelf.paste = { [weak self] in self?.pasteFrom(.general) }
+        shelf.addMenu = additionMenu()
         store.onChange = { [weak self] in guard let self, self.shelf.window?.isVisible == true else { return }; self.shelf.refresh() }
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = statusItem.button { button.image = NSImage(systemSymbolName: "paperclip", accessibilityDescription: "TCenter 临时编辑中心"); button.image?.isTemplate = true; button.toolTip = "TCenter · 移入顶部菜单栏展开，⌃⌥空格 展开 / 收起，右键打开菜单"; button.target = self; button.action = #selector(statusClicked); button.sendAction(on: [.leftMouseUp, .rightMouseUp]) }
@@ -85,11 +86,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         toggle.target = self; toggle.keyEquivalentModifierMask = [.control, .option]
         if shelfHotKey?.isRegistered != true { toggle.title += "（全局快捷键不可用）" }
         menu.addItem(.separator())
+        for item in additionMenu().items { menu.addItem(item.copy() as! NSMenuItem) }
+        for (title, action) in [("打开存储目录", #selector(revealStore)), ("关于 TCenter", #selector(about))] { let item = menu.addItem(withTitle: title, action: action, keyEquivalent: ""); item.target = self }
+        menu.addItem(.separator()); menu.addItem(withTitle: "退出 TCenter", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"); return menu
+    }
+    func additionMenu() -> NSMenu {
+        let menu = NSMenu()
         let newItem = NSMenuItem(title: "新建", action: nil, keyEquivalent: ""); let submenu = NSMenu(); newItem.submenu = submenu
         for ext in ["md", "txt", "json", "xml", "csv"] { let item = submenu.addItem(withTitle: ext.uppercased() + " 文档", action: #selector(createFromMenu(_:)), keyEquivalent: ""); item.target = self; item.representedObject = ext }
         menu.addItem(newItem)
-        for (title, action) in [("导入文件…", #selector(chooseFiles)), ("打开存储目录", #selector(revealStore)), ("关于 TCenter", #selector(about))] { let item = menu.addItem(withTitle: title, action: action, keyEquivalent: ""); item.target = self }
-        menu.addItem(.separator()); menu.addItem(withTitle: "退出 TCenter", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"); return menu
+        menu.addItem(withTitle: "导入文件…", action: #selector(chooseFiles), keyEquivalent: "").target = self
+        return menu
     }
     @objc private func showShelf() {
         let mouse = NSEvent.mouseLocation; let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main!

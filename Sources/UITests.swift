@@ -54,7 +54,22 @@ func runUITests() throws {
     let png = NSBitmapImageRep(data: image.tiffRepresentation!)!.representation(using: .png, properties: [:])!
     let imageURL = try store.create(name: "06-图片.png", data: png)
     let imageEditor = try EditorController(file: MountedFile(url: imageURL), store: store); try render(imageEditor.window!, "06-image"); imageEditor.close()
-    let shelf = ShelfController(store: store); shelf.present(on: NSScreen.main!); try render(shelf.window!, "shelf")
+    let shelf = ShelfController(store: store)
+    let menuDelegate = AppDelegate(); shelf.addMenu = menuDelegate.additionMenu()
+    guard let newItems = shelf.addMenu?.items.first?.submenu?.items,
+          newItems.compactMap({ $0.representedObject as? String }) == ["md", "txt", "json", "xml", "csv"],
+          newItems.allSatisfy({ $0.target === menuDelegate && $0.action != nil }),
+          let importItem = shelf.addMenu?.items.last, importItem.title == "导入文件…", importItem.target === menuDelegate, importItem.action != nil else { throw AppError.message("Shelf addition menu must reuse creation/import actions") }
+    shelf.present(on: NSScreen.main!); try render(shelf.window!, "shelf")
+    guard let addButton = descendants(shelf.window!.contentView!).first(where: { ($0 as? NSButton)?.toolTip == "添加：新建文档或导入文件" }) as? NSButton,
+          !addButton.isHidden, addButton.isEnabled, addButton.target === shelf, addButton.action != nil,
+          let scrollView = descendants(shelf.window!.contentView!).first(where: { $0 is NSScrollView }),
+          addButton.frame.width == 28, addButton.frame.minX > scrollView.frame.maxX else { throw AppError.message("Shelf add button missing or overlapping files") }
+    let emptyStorage = output.appendingPathComponent("empty-fixtures-\(UUID().uuidString)")
+    let emptyShelf = ShelfController(store: try FileStore(directory: emptyStorage)); emptyShelf.addMenu = menuDelegate.additionMenu(); emptyShelf.present(on: NSScreen.main!)
+    try render(emptyShelf.window!, "shelf-empty")
+    guard descendants(emptyShelf.window!.contentView!).contains(where: { ($0 as? NSButton)?.toolTip == addButton.toolTip && !$0.isHidden }) else { throw AppError.message("Empty shelf must allow adding files") }
+    emptyShelf.close()
     guard shelf.window?.backgroundColor == .clear, abs(shelf.window!.frame.width - (NSScreen.main!.visibleFrame.width - 20)) < 1 else { throw AppError.message("Shelf transparency/width failed") }
     // Pure interaction clock checks avoid moving the user's actual mouse.
     var policy = ShelfDismissalPolicy(); let t = Date()
