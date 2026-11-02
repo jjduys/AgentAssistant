@@ -4,6 +4,7 @@ final class EditorController: NSWindowController, NSWindowDelegate, NSTextViewDe
     let file: MountedFile
     let store: FileStore
     var onClose: (() -> Void)?
+    var onAccess: (() -> Void)?
     private let body = NSView()
     private let status = NSTextField(labelWithString: "")
     private let mode = NSSegmentedControl(labels: ["编辑", "源码"], trackingMode: .selectOne, target: nil, action: nil)
@@ -122,6 +123,7 @@ final class EditorController: NSWindowController, NSWindowDelegate, NSTextViewDe
         guard flush() else { showError(AppError.message("文件尚未保存，窗口将保留。请检查存储目录和可用空间，然后重试。"), window: sender); return false }; return true
     }
     func windowWillClose(_ notification: Notification) { saveWork?.cancel(); onClose?() }
+    func windowDidBecomeKey(_ notification: Notification) { onAccess?() }
     @objc private func reveal() { NSWorkspace.shared.activateFileViewerSelecting([file.url]) }
 
     // CSV keeps every row as data; column letters avoid treating the first record as metadata.

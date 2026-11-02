@@ -6,6 +6,7 @@ let imageExtensions: Set<String> = ["png", "jpg", "jpeg", "gif", "heic", "heif",
 
 struct MountedFile {
     let url: URL
+    var lastAccessed: Date = .distantPast
     var name: String { url.lastPathComponent }
     var ext: String { url.pathExtension.lowercased() }
     var isImage: Bool { imageExtensions.contains(ext) }
@@ -14,15 +15,36 @@ struct MountedFile {
 
 final class FileStore {
     let directory: URL
+    private var accessHistory: [String: Date] = [:]
+    private var historyURL: URL { directory.appendingPathComponent(".access-history.json") }
     var onChange: (() -> Void)?
     init(directory: URL? = nil) throws {
+        // Preserve the existing data location across the product rename.
         self.directory = directory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("TCenter/Files", isDirectory: true)
         try FileManager.default.createDirectory(at: self.directory, withIntermediateDirectories: true)
+        if FileManager.default.fileExists(atPath: historyURL.path) {
+            accessHistory = try JSONDecoder().decode([String: Date].self, from: Data(contentsOf: historyURL))
+        }
     }
     func files() -> [MountedFile] {
-        ((try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey], options: .skipsHiddenFiles)) ?? [])
+        ((try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.contentModificationDateKey, .creationDateKey, .isRegularFileKey], options: .skipsHiddenFiles)) ?? [])
             .filter { supportedExtensions.contains($0.pathExtension.lowercased()) && (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true }
-            .map { MountedFile(url: $0) }.sorted { $0.modified == $1.modified ? $0.name < $1.name : $0.modified < $1.modified }
+            .map { url in
+                let values = try? url.resourceValues(forKeys: [.creationDateKey, .contentModificationDateKey])
+                let fallback = max(values?.creationDate ?? .distantPast, values?.contentModificationDate ?? .distantPast)
+                return MountedFile(url: url, lastAccessed: accessHistory[url.lastPathComponent] ?? fallback)
+            }.sorted { $0.lastAccessed == $1.lastAccessed ? $0.name < $1.name : $0.lastAccessed < $1.lastAccessed }
+    }
+    func latestFile() -> MountedFile? { files().last }
+    func recordAccess(_ url: URL, at date: Date = Date()) throws {
+        var history = accessHistory
+        history[url.lastPathComponent] = date
+        try JSONEncoder().encode(history).write(to: historyURL, options: .atomic)
+        accessHistory = history
+        onChange?()
+    }
+    @discardableResult func createPastedText(_ text: String, stamp: String) throws -> URL {
+        try create(name: "便签-\(stamp).md", data: Data(text.utf8))
     }
     func uniqueURL(_ name: String) -> URL {
         let clean = URL(fileURLWithPath: name).lastPathComponent
@@ -39,12 +61,12 @@ final class FileStore {
         let target = uniqueURL(source.lastPathComponent)
         try FileManager.default.copyItem(at: source, to: target)
         try FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: target.path)
-        onChange?(); return target
+        try recordAccess(target); return target
     }
     @discardableResult func create(name: String, data: Data) throws -> URL {
-        let url = uniqueURL(name); try data.write(to: url, options: .atomic); onChange?(); return url
+        let url = uniqueURL(name); try data.write(to: url, options: .atomic); try recordAccess(url); return url
     }
-    func save(_ text: String, to url: URL) throws { try Data(text.utf8).write(to: url, options: .atomic); onChange?() }
+    func save(_ text: String, to url: URL) throws { try Data(text.utf8).write(to: url, options: .atomic); try recordAccess(url) }
     func trash(_ url: URL) throws { try FileManager.default.trashItem(at: url, resultingItemURL: nil); onChange?() }
 }
 

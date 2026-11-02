@@ -71,7 +71,9 @@ final class ScreenshotMonitor {
         catch { status = "无法读取截图目录，自动挂载暂停：\(error.localizedDescription)"; return false }
     }
     func start() {
-        folders = directories(); if !configuredClipboardTarget() { _ = rebase() }
+        // The capture-session entry point takes its own baseline. Avoid touching
+        // protected output folders while idle, which can block application launch.
+        folders = directories()
         if testDirectory == nil {
             for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didActivateApplicationNotification] {
                 observers.append(NSWorkspace.shared.notificationCenter.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
@@ -156,7 +158,7 @@ final class ScreenshotMonitor {
         if testDirectory == nil { observeToolbar() }
         guard let start = sessionStart else {
             let current = directories()
-            if current != folders { folders = current; if !configuredClipboardTarget() { _ = rebase() } }
+            if current != folders { folders = current }
             return
         }
         guard Date() <= deadline else { cancelCaptureSession(); return }

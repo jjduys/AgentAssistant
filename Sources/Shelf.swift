@@ -18,6 +18,8 @@ struct ShelfDismissalPolicy {
 final class ShelfController: NSWindowController {
     let store: FileStore
     var openFile: ((URL) -> Void)?
+    var accessFile: ((URL) -> Void)?
+    var triggerCorner = TriggerCorner.topLeft
     var deleteFile: ((URL) -> Void)?
     var importFiles: (([URL]) -> Void)?
     var paste: (() -> Void)?
@@ -58,8 +60,7 @@ final class ShelfController: NSWindowController {
     required init?(coder: NSCoder) { fatalError() }
     func present(on screen: NSScreen) {
         let visible = screen.visibleFrame
-        let width = visible.width - 20
-        window?.setFrame(NSRect(x: visible.midX - width / 2, y: visible.maxY - 88, width: width, height: 84), display: true)
+        window?.setFrame(triggerCorner.shelfFrame(in: visible), display: true)
         refresh(force: true); window?.makeKeyAndOrderFront(nil); window?.makeFirstResponder(canvas)
         dismissTimer?.invalidate(); dismissal = ShelfDismissalPolicy()
         updateDismissal()
@@ -76,7 +77,7 @@ final class ShelfController: NSWindowController {
         }
     }
     func refresh(force: Bool = false) {
-        let files = store.files(); let next = files.map { "\($0.url.path):\($0.modified.timeIntervalSince1970)" }.joined(separator: "|")
+        let files = store.files(); let next = files.map { "\($0.url.path):\($0.modified.timeIntervalSince1970):\($0.lastAccessed.timeIntervalSince1970)" }.joined(separator: "|")
         guard force || next != signature else { return }; signature = next
         cards.subviews.forEach { $0.removeFromSuperview() }; empty.isHidden = !files.isEmpty
         canvas.layoutSubtreeIfNeeded()
@@ -88,6 +89,7 @@ final class ShelfController: NSWindowController {
         for (index, file) in files.enumerated() {
             let card = FileCard(file: file, frame: NSRect(x: startX + CGFloat(index) * (cardWidth + spacing), y: 0, width: cardWidth, height: 76))
             card.onDragChanged = { [weak self] active in self?.dragActive = active; self?.updateDismissal() }
+            card.onAccess = { [weak self] in self?.accessFile?(file.url) }
             card.open = { [weak self] in self?.openFile?(file.url) }; card.remove = { [weak self] in self?.deleteFile?(file.url) }; cards.addSubview(card)
         }
     }
@@ -139,7 +141,7 @@ final class ShelfCanvas: NSView {
         dragging = false; onDragChanged?(false); needsDisplay = true
         let urls = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
         if !urls.isEmpty { onDrop?(urls); return true }
-        NotificationCenter.default.post(name: .init("TCenterPasteboardDrop"), object: sender.draggingPasteboard); return true
+        NotificationCenter.default.post(name: .init("AgentAssistantPasteboardDrop"), object: sender.draggingPasteboard); return true
     }
     override func keyDown(with event: NSEvent) { if event.keyCode == 53 { window?.orderOut(nil) } else { super.keyDown(with: event) } }
     @objc func paste(_ sender: Any?) { onPaste?() }
@@ -147,6 +149,7 @@ final class ShelfCanvas: NSView {
 
 final class FileCard: NSView, NSDraggingSource {
     var onDragChanged: ((Bool) -> Void)?
+    var onAccess: (() -> Void)?
     let file: MountedFile
     var open: (() -> Void)?
     var remove: (() -> Void)?
@@ -188,7 +191,7 @@ final class FileCard: NSView, NSDraggingSource {
         let pin = NSRect(x: 53, y: 55, width: 6, height: 20); NSGradient(starting: .white, ending: .gray)?.draw(in: NSBezierPath(roundedRect: pin, xRadius: 3, yRadius: 3), angle: 0)
         let p = NSMutableParagraphStyle(); p.alignment = .left; p.lineBreakMode = .byTruncatingMiddle
         let labelShadow = NSShadow(); labelShadow.shadowColor = .black.withAlphaComponent(0.85); labelShadow.shadowBlurRadius = 3; labelShadow.shadowOffset = NSSize(width: 0, height: -1)
-        let date = DateFormatter.localizedString(from: file.modified, dateStyle: .none, timeStyle: .short)
+        let date = DateFormatter.localizedString(from: file.lastAccessed, dateStyle: .none, timeStyle: .short)
         let timeAttributes: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 7), .foregroundColor: NSColor.white.withAlphaComponent(0.85), .shadow: labelShadow]
         let timeWidth = ceil((date as NSString).size(withAttributes: timeAttributes).width)
         (file.name as NSString).draw(in: NSRect(x: 3, y: max(0, rect.minY - 12), width: 102 - timeWidth - 5, height: 11), withAttributes: [.font: NSFont.systemFont(ofSize: 8, weight: .medium), .foregroundColor: NSColor.white, .paragraphStyle: p, .shadow: labelShadow])
@@ -204,7 +207,7 @@ final class FileCard: NSView, NSDraggingSource {
         beginDraggingSession(with: [item], event: event, source: self)
     }
     override func mouseUp(with event: NSEvent) { if !didDrag { open?() } }
-    func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) { onDragChanged?(false) }
+    func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) { onDragChanged?(false); if !operation.isEmpty { onAccess?() } }
     func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation { .copy }
     @objc private func deleteClicked() { remove?() }
 }

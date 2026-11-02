@@ -2,8 +2,8 @@
 import PackageDescription
 
 let package = Package(
-    name: "TCenter",
+    name: "AgentAssistant",
     platforms: [.macOS(.v13)],
-    products: [.executable(name: "TCenter", targets: ["TCenter"])],
-    targets: [.executableTarget(name: "TCenter", path: "Sources")]
+    products: [.executable(name: "AgentAssistant", targets: ["AgentAssistant"])],
+    targets: [.executableTarget(name: "AgentAssistant", path: "Sources")]
 )
