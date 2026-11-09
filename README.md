@@ -4,6 +4,8 @@
 
 # AgentAssistant
 
+中文 | [English](README.en.md)
+
 一个原生 macOS 菜单栏工具：把临时文字、文件和图片挂在屏幕边缘，随时编辑、预览或拖到其他应用，也可以在同一个菜单中控制系统的“永不睡眠”开关。
 
 使用 Swift + AppKit 开发，无第三方运行依赖。当前版本为 **1.4.0（构建 11）**，项目原名 TCenter。
@@ -24,14 +26,14 @@
 需要 macOS 13.0 及以上，以及包含 Swift 的 Xcode Command Line Tools。当前验证环境为 Apple Silicon；构建脚本生成当前机器架构的应用，Intel 环境尚未验证。
 
 ```sh
-git clone https://github.com/jjduys/TCenter.git AgentAssistant
+git clone https://github.com/jjduys/AgentAssistant.git
 cd AgentAssistant
 
 zsh scripts/build.sh
 open build/AgentAssistant.app --args --show
 ```
 
-GitHub 仓库暂沿用原名 `TCenter`，本地目录、Swift 包和应用名称均为 `AgentAssistant`。
+GitHub 仓库、本地目录、Swift 包和应用名称均为 `AgentAssistant`；原仓库地址 `jjduys/TCenter` 会由 GitHub 自动跳转。
 
 构建完成后，将 `build/AgentAssistant.app` 拖入“应用程序”即可安装。它是菜单栏应用，启动后通过顶部的助手图标使用，不显示 Dock 图标。
 
