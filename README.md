@@ -26,14 +26,14 @@
 需要 macOS 13.0 及以上，以及包含 Swift 的 Xcode Command Line Tools。当前验证环境为 Apple Silicon；构建脚本生成当前机器架构的应用，Intel 环境尚未验证。
 
 ```sh
-git clone https://github.com/jjduys/TCenter.git AgentAssistant
+git clone https://github.com/jjduys/AgentAssistant.git
 cd AgentAssistant
 
 zsh scripts/build.sh
 open build/AgentAssistant.app --args --show
 ```
 
-GitHub 仓库暂沿用原名 `TCenter`，本地目录、Swift 包和应用名称均为 `AgentAssistant`。
+GitHub 仓库、本地目录、Swift 包和应用名称均为 `AgentAssistant`；原仓库地址 `jjduys/TCenter` 会由 GitHub 自动跳转。
 
 构建完成后，将 `build/AgentAssistant.app` 拖入“应用程序”即可安装。它是菜单栏应用，启动后通过顶部的助手图标使用，不显示 Dock 图标。
 

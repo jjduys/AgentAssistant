@@ -26,14 +26,14 @@ Built with Swift + AppKit, with no third-party runtime dependencies. The current
 Requires macOS 13.0 or later and Xcode Command Line Tools with Swift. It is currently verified on Apple Silicon; the build script produces an app for the current machine's architecture, and Intel has not been verified yet.
 
 ```sh
-git clone https://github.com/jjduys/TCenter.git AgentAssistant
+git clone https://github.com/jjduys/AgentAssistant.git
 cd AgentAssistant
 
 zsh scripts/build.sh
 open build/AgentAssistant.app --args --show
 ```
 
-The GitHub repository still uses the original name `TCenter` for now; the local directory, Swift package and app are all named `AgentAssistant`.
+The GitHub repository, local directory, Swift package and app are all named `AgentAssistant`; the old repository URL `jjduys/TCenter` is redirected automatically by GitHub.
 
 After building, drag `build/AgentAssistant.app` into Applications to install it. It is a menu bar app: once launched, use it through the assistant icon at the top of the screen. It does not show a Dock icon.
 
