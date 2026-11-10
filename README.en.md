@@ -43,52 +43,29 @@ The app is ad-hoc signed on the local machine and is not notarized with a Develo
 
 ## Everyday use
 
-### Opening the shelf and recent file
+### Opening the shelf
 
-| Action | Default hotkey |
+| Method | Description |
 | --- | --- |
-| Show / hide the shelf | Control + Option + Space (⌃⌥Space) |
-| Open the most recently accessed file | Control + Option + Return (⌃⌥Return) |
+| Hotkey ⌃⌥Space | Show / hide the shelf |
+| Hotkey ⌃⌥Return | Open the most recently accessed file |
+| Hot corner | Move the pointer into a screen corner (top-left by default) to expand it; it hides 3 seconds after you leave |
 
-Right-click the assistant icon in the menu bar and choose "Settings…" to change both hotkeys, or open Settings with ⌘, from the app menu. A hotkey must include at least one of Control, Option or Command; duplicate combinations or combinations already in use cannot be saved. Changes take effect immediately after saving and persist across restarts.
-
-While the Settings window is open, global hotkeys are temporarily disabled and are restored when it closes. Hotkey registration status is shown in "About AgentAssistant".
-
-"Recently accessed" is based on the app's own access records: creating, importing, opening, reactivating an editor window, saving, and successfully dragging a file out all update the timestamp. Background thumbnail loading does not change the order, and the records persist across restarts. The shelf is ordered from oldest to newest, left to right. An existing editor window is brought to the front, and a minimized window is restored.
-
-### Hot corners
-
-In Settings you can choose top-left, top-right, bottom-left or bottom-right; **the default is top-left**. The shelf expands when the pointer enters the **32 × 32 point** area of that corner on the current screen. For top corners the shelf appears at the top of the screen; for bottom corners it appears at the bottom.
-
-- It stays visible while the pointer rests in the trigger area or on the shelf, and also while dragging.
-- It hides 3 seconds after the pointer leaves; re-entering cancels the countdown.
-- After hiding it manually, you must leave the trigger area and enter again for it to reopen.
-- Clicking another app hides the shelf immediately.
-
-Global hotkeys and hot corners do not require Accessibility permission.
+Hotkeys and the hot corner can be changed in "Settings…" from the right-click menu (or with ⌘,), and take effect as soon as they are saved. Neither requires Accessibility permission.
 
 ### Adding and removing files
 
-- Click "＋ Add" on the right side of the shelf to create an MD, TXT, JSON, XML or CSV document, or to import a file. The same entry is available from the menu bar icon's right-click menu.
-- With the shelf expanded, press ⌘V to add files, images or text from the clipboard. Text becomes an `.md` file with the original content preserved.
-- Files can be dragged in from Finder. Imported files are copied into the app's storage directory; the original stays in place, and name conflicts are resolved automatically.
-- Click an item to open the editor or image preview; dragging an item out uses macOS file-copy semantics.
-- Clicking an item's × moves only the app's stored copy to the Trash; the original file is kept.
+- **Add**: click "＋ Add" to create or import a file, press ⌘V to paste files, images or text (text is saved as `.md`), or drag files in from Finder.
+- **Use**: click an item to edit or preview it, or drag it out to copy it into another app.
+- **Remove**: click an item's ×; the copy is moved to the Trash.
+
+Imported files are always copies; the original files are never touched.
 
 ### Editing and autosave
 
-| File type | Editing |
-| --- | --- |
-| MD / Markdown | Text editing; preview of basic headings, lists, bold, inline code and code blocks |
-| TXT | Native text editing with cut, copy, paste and undo |
-| CSV | Table editing, add / remove rows and columns, source view toggle; supports quotes, escapes, multi-line fields and CRLF |
-| JSON | Tree editing of keys, values and types, add / remove nodes, source view toggle |
-| XML | Tree editing of elements, attributes, text and comments, add / remove nodes, source view toggle |
-| Images | Aspect-preserving preview of PNG, JPEG, GIF, HEIC, HEIF, TIFF, WebP and BMP; decoding support depends on macOS |
+MD, TXT, CSV, JSON and XML can be edited. CSV has a table view and JSON and XML have tree views, each with a toggle back to the source. Images are preview-only.
 
-Text and CSV are saved 350 ms after you stop typing; tree fields are validated and saved when editing ends. Content is saved immediately before a window closes or the app quits, and closing is blocked if saving fails. Closing an editor window does not remove the file from the shelf.
-
-Text can be read as UTF-8 or UTF-16 with BOM, and is always saved as UTF-8. Saving from the JSON tree re-indents and sorts keys, XML serialization may adjust formatting details, and the Markdown preview covers a basic subset.
+Edits are saved automatically as UTF-8, and closing an editor window does not remove the file from the shelf.
 
 ## Screenshot capture
 
