@@ -118,6 +118,54 @@ AgentAssistant keeps the original TCenter app identifier and storage locations, 
 
 Choose "Open Storage Folder" from the right-click menu. To back up, save the app data directories above; to keep your hotkeys and hot corner, also keep the corresponding app preferences.
 
+## Architecture
+
+```mermaid
+flowchart TB
+    subgraph Entry["Entry"]
+        Main["main.swift<br/>launch argument dispatch"]
+        App["AppDelegate<br/>menu bar icon, windows, file actions"]
+    end
+
+    subgraph UI["UI layer"]
+        Shelf["ShelfController<br/>shelf, file cards, drag and drop, hot corner"]
+        Editor["EditorController<br/>text / CSV / JSON / XML / image"]
+        SettingsUI["SettingsController<br/>shortcuts and trigger corner"]
+        SleepMenu["SleepMenuController<br/>Never Sleep menu"]
+    end
+
+    subgraph Services["Service layer"]
+        Store["FileStore<br/>file copies and recent-access history"]
+        HotKey["ShelfHotKey<br/>global shortcuts"]
+        Monitor["ScreenshotMonitor<br/>capture session detection and dedup"]
+        SleepCtl["SleepController<br/>async toggle and refresh"]
+        Power["PmsetService<br/>read and set SleepDisabled"]
+    end
+
+    subgraph System["macOS"]
+        Disk[("Application Support/TCenter")]
+        Defaults[("UserDefaults<br/>TCenter.settings")]
+        Carbon["Carbon hot keys"]
+        Capture["Screenshot tool / clipboard / screenshot folder"]
+        Pmset["pmset + administrator authorization"]
+    end
+
+    Main -->|"--self-test / --ui-test"| Tests["SelfTests / UITests"]
+    Main --> App
+    App --> Shelf & Editor & SettingsUI & SleepMenu
+    App --> Store & HotKey & Monitor
+    Shelf --> Store
+    Editor --> Store
+    SettingsUI --> Defaults
+    Store --> Disk
+    HotKey --> Carbon
+    Monitor --> Capture
+    Monitor -->|"import screenshot"| Store
+    SleepMenu --> SleepCtl --> Power --> Pmset
+```
+
+`AppDelegate` wires everything together: the shelf and editor read and write file copies through `FileStore`; when the screenshot monitor detects a new capture it imports it through `FileStore` and opens the shelf; the Never Sleep menu goes through `SleepController` to `PmsetService`, which tests swap for the in-memory `DemoPowerService`.
+
 ## Development and testing
 
 ```sh
