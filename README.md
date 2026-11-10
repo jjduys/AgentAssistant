@@ -118,6 +118,54 @@ AgentAssistant 沿用原 TCenter 的应用标识和存储位置，因此可以�
 
 可在右键菜单中选择“打开存储目录”。备份时，保存上述应用数据目录；如需保留快捷键和触发角落，也应同时保留对应的应用偏好设置。
 
+## 架构
+
+```mermaid
+flowchart TB
+    subgraph 入口["入口"]
+        Main["main.swift<br/>启动参数分发"]
+        App["AppDelegate<br/>菜单栏图标、窗口与文件操作协调"]
+    end
+
+    subgraph 界面["界面层"]
+        Shelf["ShelfController<br/>吊栏、文件卡片、拖放、四角触发"]
+        Editor["EditorController<br/>文本 / CSV / JSON / XML / 图片"]
+        SettingsUI["SettingsController<br/>快捷键与触发角落"]
+        SleepMenu["SleepMenuController<br/>永不睡眠菜单"]
+    end
+
+    subgraph 服务["服务层"]
+        Store["FileStore<br/>文件副本与最近访问记录"]
+        HotKey["ShelfHotKey<br/>全局快捷键"]
+        Monitor["ScreenshotMonitor<br/>截图会话识别与去重"]
+        SleepCtl["SleepController<br/>异步切换与状态刷新"]
+        Power["PmsetService<br/>读取与修改 SleepDisabled"]
+    end
+
+    subgraph 系统["macOS"]
+        Disk[("Application Support/TCenter")]
+        Defaults[("UserDefaults<br/>TCenter.settings")]
+        Carbon["Carbon 热键"]
+        Capture["截图工具 / 剪贴板 / 截图目录"]
+        Pmset["pmset + 管理员授权"]
+    end
+
+    Main -->|"--self-test / --ui-test"| Tests["SelfTests / UITests"]
+    Main --> App
+    App --> Shelf & Editor & SettingsUI & SleepMenu
+    App --> Store & HotKey & Monitor
+    Shelf --> Store
+    Editor --> Store
+    SettingsUI --> Defaults
+    Store --> Disk
+    HotKey --> Carbon
+    Monitor --> Capture
+    Monitor -->|"导入截图"| Store
+    SleepMenu --> SleepCtl --> Power --> Pmset
+```
+
+`AppDelegate` 负责装配所有组件：吊栏和编辑器通过 `FileStore` 读写文件副本；截图监听识别到新截图后经 `FileStore` 导入并展开吊栏；永不睡眠菜单经 `SleepController` 调用 `PmsetService`，测试时可替换为内存后端 `DemoPowerService`。
+
 ## 开发与测试
 
 ```sh
