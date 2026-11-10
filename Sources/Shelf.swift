@@ -164,7 +164,7 @@ final class FileCard: NSView, NSDraggingSource {
         if !file.isImage, let handle = try? FileHandle(forReadingFrom: file.url) { let data = (try? handle.read(upToCount: 1800)) ?? Data(); excerpt = String(decoding: data, as: UTF8.self); try? handle.close() } else { excerpt = "" }
         super.init(frame: frame)
         toolTip = "\(file.name)\n点击打开 · 拖动到其他软件 · × 移至废纸篓"
-        closeButton.frame = NSRect(x: 97, y: 46, width: 15, height: 15); closeButton.image = NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: "移至废纸篓"); closeButton.contentTintColor = .white; closeButton.isBordered = false; closeButton.target = self; closeButton.action = #selector(deleteClicked); closeButton.toolTip = "将挂载副本移至废纸篓"; closeButton.isHidden = true; addSubview(closeButton)
+        closeButton.frame = NSRect(x: 97, y: 46, width: 15, height: 15); closeButton.image = NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: "移至废纸篓"); closeButton.contentTintColor = NSColor(calibratedWhite: 0.35, alpha: 1); closeButton.isBordered = false; closeButton.target = self; closeButton.action = #selector(deleteClicked); closeButton.toolTip = "将挂载副本移至废纸篓"; closeButton.isHidden = true; addSubview(closeButton)
     }
     required init?(coder: NSCoder) { fatalError() }
     override func updateTrackingAreas() { super.updateTrackingAreas(); trackingAreas.forEach(removeTrackingArea); addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways], owner: self)) }
@@ -177,17 +177,17 @@ final class FileCard: NSView, NSDraggingSource {
         let rect = NSRect(x: 3, y: 61 - imageHeight, width: 106, height: imageHeight)
         closeButton.frame.origin.y = rect.maxY - 10
         NSGraphicsContext.saveGraphicsState(); let shadow = NSShadow(); shadow.shadowColor = .black.withAlphaComponent(0.4); shadow.shadowBlurRadius = 5; shadow.shadowOffset = NSSize(width: 0, height: -3); shadow.set()
-        NSColor(calibratedRed: 0.20, green: 0.25, blue: 0.32, alpha: 1).setFill(); NSBezierPath(roundedRect: rect, xRadius: 10, yRadius: 10).fill(); NSGraphicsContext.restoreGraphicsState()
+        NSColor.white.setFill(); NSBezierPath(roundedRect: rect, xRadius: 10, yRadius: 10).fill(); NSGraphicsContext.restoreGraphicsState()
         NSGraphicsContext.saveGraphicsState(); NSBezierPath(roundedRect: rect.insetBy(dx: 2, dy: 2), xRadius: 8, yRadius: 8).addClip()
         if let preview {
             let size = preview.size; let scale = min((rect.width - 4) / max(size.width, 1), (rect.height - 4) / max(size.height, 1)); let target = NSRect(x: rect.midX - size.width * scale / 2, y: rect.midY - size.height * scale / 2, width: size.width * scale, height: size.height * scale); preview.draw(in: target)
         } else {
-            NSColor(calibratedRed: 0.075, green: 0.095, blue: 0.13, alpha: 1).setFill(); rect.fill()
+            NSColor.white.setFill(); rect.fill()
             let p = NSMutableParagraphStyle(); p.lineBreakMode = .byTruncatingTail
-            (excerpt as NSString).draw(in: rect.insetBy(dx: 5, dy: 5), withAttributes: [.font: NSFont.monospacedSystemFont(ofSize: 3.5, weight: .regular), .foregroundColor: NSColor(calibratedRed: 0.66, green: 0.80, blue: 0.84, alpha: 1), .paragraphStyle: p])
+            (excerpt as NSString).draw(in: rect.insetBy(dx: 5, dy: 5), withAttributes: [.font: NSFont.monospacedSystemFont(ofSize: 3.5, weight: .regular), .foregroundColor: NSColor.black, .paragraphStyle: p])
         }
         NSGraphicsContext.restoreGraphicsState()
-        (hover ? NSColor.systemTeal : NSColor.white.withAlphaComponent(0.35)).setStroke(); let border = NSBezierPath(roundedRect: rect, xRadius: 10, yRadius: 10); border.lineWidth = hover ? 1.5 : 1; border.stroke()
+        (hover ? NSColor.systemTeal : NSColor.black.withAlphaComponent(0.25)).setStroke(); let border = NSBezierPath(roundedRect: rect, xRadius: 10, yRadius: 10); border.lineWidth = hover ? 1.5 : 1; border.stroke()
         let pin = NSRect(x: 53, y: 55, width: 6, height: 20); NSGradient(starting: .white, ending: .gray)?.draw(in: NSBezierPath(roundedRect: pin, xRadius: 3, yRadius: 3), angle: 0)
         let p = NSMutableParagraphStyle(); p.alignment = .left; p.lineBreakMode = .byTruncatingMiddle
         let labelShadow = NSShadow(); labelShadow.shadowColor = .black.withAlphaComponent(0.85); labelShadow.shadowBlurRadius = 3; labelShadow.shadowOffset = NSSize(width: 0, height: -1)
