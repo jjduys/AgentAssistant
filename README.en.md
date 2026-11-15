@@ -8,7 +8,7 @@
 
 A native macOS menu bar utility: pin temporary text, files and images to the edge of your screen, then edit, preview or drag them into other apps at any time. The same menu also lets you control the system's "Never Sleep" switch.
 
-Built with Swift + AppKit, with no third-party runtime dependencies. The current version is **1.4.0 (build 12)**. The project was formerly named TCenter.
+Built with Swift + AppKit, with no third-party runtime dependencies. The current version is **1.4.0 (build 13)**. The project was formerly named TCenter.
 
 ## Features
 
