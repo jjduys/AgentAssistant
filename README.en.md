@@ -8,7 +8,7 @@
 
 A native macOS menu bar utility: pin temporary text, files and images to the edge of your screen, then edit, preview or drag them into other apps at any time. The same menu also lets you control the system's "Never Sleep" switch.
 
-Built with Swift + AppKit, with no third-party runtime dependencies. The current version is **1.4.0 (build 11)**. The project was formerly named TCenter.
+Built with Swift + AppKit, with no third-party runtime dependencies. The current version is **1.4.0 (build 12)**. The project was formerly named TCenter.
 
 ## Features
 
@@ -60,6 +60,8 @@ Hotkeys and the hot corner can be changed in "Settings…" from the right-click 
 - **Remove**: click an item's ×; the copy is moved to the Trash.
 
 Imported files are always copies; the original files are never touched.
+
+The shelf only shows files accessed in the last 3 days, oldest on the left and newest on the right, with at most 7 visible at once; it opens at the newest end. Older items fold to the left (shown as "‹ 更早 N"): move the pointer to the left edge of the strip to scroll back, or to the right edge to return to the newest. Files older than 3 days are not deleted and stay in the storage directory.
 
 ### Editing and autosave
 

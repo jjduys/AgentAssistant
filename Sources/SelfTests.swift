@@ -48,6 +48,24 @@ func runSelfTests() throws {
     try check(textStore.latestFile()?.isImage == true && textStore.latestFile()?.url.standardizedFileURL.path == image.standardizedFileURL.path, "New image can be the latest file")
     try textStore.save("edited", to: pasted)
     try check(textStore.latestFile()?.url.standardizedFileURL.path == pasted.standardizedFileURL.path, "Editing updates access order")
+    let retentionStore = try FileStore(directory: temporary.appendingPathComponent("retention"))
+    let now = Date()
+    let fresh = try retentionStore.create(name: "fresh.md", data: Data("new".utf8))
+    let edge = try retentionStore.create(name: "edge.md", data: Data("edge".utf8))
+    let stale = try retentionStore.create(name: "stale.md", data: Data("old".utf8))
+    try retentionStore.recordAccess(edge, at: now.addingTimeInterval(-FileStore.shelfRetention + 60))
+    try retentionStore.recordAccess(stale, at: now.addingTimeInterval(-FileStore.shelfRetention - 60))
+    try retentionStore.recordAccess(fresh, at: now)
+    let recentNames = retentionStore.recentFiles(now: now).map(\.name)
+    try check(recentNames == ["edge.md", "fresh.md"], "Shelf keeps only the last 3 days, old-to-new: \(recentNames)")
+    try check(FileManager.default.fileExists(atPath: stale.path) && retentionStore.files().count == 3, "Expired shelf entries stay on disk")
+    try check(ShelfStripLayout.visibleCount(total: 0, availableWidth: 2000) == 0, "Empty strip shows nothing")
+    try check(ShelfStripLayout.visibleCount(total: 5, availableWidth: 2000) == 5, "Few files all visible")
+    try check(ShelfStripLayout.visibleCount(total: 12, availableWidth: 2000) == 7, "At most 7 cards visible")
+    try check(ShelfStripLayout.visibleCount(total: 12, availableWidth: ShelfStripLayout.width(cards: 4)) == 4, "Narrow screens fit fewer cards")
+    try check(ShelfStripLayout.visibleCount(total: 12, availableWidth: 10) == 1, "Always at least one card")
+    try check(ShelfStripLayout.newestOffset(total: 12, viewport: ShelfStripLayout.width(cards: 7)) == ShelfStripLayout.cardX(5) - ShelfStripLayout.inset, "Initial offset shows the newest 7 cards")
+    try check(ShelfStripLayout.newestOffset(total: 3, viewport: ShelfStripLayout.width(cards: 3)) == 0, "No offset when all cards fit")
     let suite = "AgentAssistant-tests-\(UUID().uuidString)"
     let defaults = UserDefaults(suiteName: suite)!
     defer { defaults.removePersistentDomain(forName: suite) }
@@ -71,6 +89,6 @@ func runSelfTests() throws {
             try check(frame.contains(corner.shelfFrame(in: frame)), "Shelf stays within the selected screen")
         }
     }
-    print("PASS: Markdown paste; access order, restart persistence, read isolation, deletion, new/imported/edited/image files; configurable shortcut persistence/conflicts; four-corner geometry on offset screens")
+    print("PASS: Markdown paste; access order, restart persistence, read isolation, deletion, new/imported/edited/image files; configurable shortcut persistence/conflicts; four-corner geometry on offset screens; 3-day shelf retention, 7-card strip with newest on the right")
     print("PASS: CSV quoting, multiline, CRLF, invalid syntax; JSON scalar/container roundtrip; XML attributes/escaping; unique names, atomic save, sorting, import copy")
 }
