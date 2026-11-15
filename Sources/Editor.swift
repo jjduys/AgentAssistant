@@ -114,6 +114,12 @@ final class EditorController: NSWindowController, NSWindowDelegate, NSTextViewDe
         do { try store.save(currentText, to: file.url); dirty = false; window?.isDocumentEdited = false; setSaved(); return true }
         catch { status.stringValue = "保存失败：\(error.localizedDescription)"; status.textColor = .systemRed; return false }
     }
+    /// Picks up changes written by the app itself (clipboard history) when there are no pending edits.
+    func reloadFromDiskIfClean() {
+        guard !dirty, !file.isImage, let text = try? readText(file.url), text != currentText else { return }
+        currentText = text
+        if ["md", "markdown"].contains(file.ext) { if mode.selectedSegment == 1 { showMarkdown() } else { showSource() } } else { rebuild() }
+    }
     private func setSaved() {
         status.textColor = .secondaryLabelColor
         status.stringValue = "已自动保存 · \(DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .medium)) · UTF-8"

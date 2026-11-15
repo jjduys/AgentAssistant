@@ -228,7 +228,8 @@ final class FileCard: NSView, NSDraggingSource {
         self.file = file; preview = file.isImage ? NSImage(contentsOf: file.url) : nil
         if !file.isImage, let handle = try? FileHandle(forReadingFrom: file.url) { let data = (try? handle.read(upToCount: 1800)) ?? Data(); excerpt = String(decoding: data, as: UTF8.self); try? handle.close() } else { excerpt = "" }
         super.init(frame: frame)
-        toolTip = "\(file.name)\n点击打开 · 拖动到其他软件 · × 移至废纸篓"
+        toolTip = (file.isClipboardHistory ? "\(file.name)（剪贴板历史，自动记录复制的文字）" : file.name) + "\n点击打开 · 拖动到其他软件 · × 移至废纸篓"
+        setAccessibilityLabel(file.isClipboardHistory ? "剪贴板历史 \(file.name)" : file.name)
         closeButton.frame = NSRect(x: 97, y: 46, width: 15, height: 15); closeButton.image = NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: "移至废纸篓"); closeButton.contentTintColor = NSColor(calibratedWhite: 0.35, alpha: 1); closeButton.isBordered = false; closeButton.target = self; closeButton.action = #selector(deleteClicked); closeButton.toolTip = "将挂载副本移至废纸篓"; closeButton.isHidden = true; addSubview(closeButton)
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -252,7 +253,8 @@ final class FileCard: NSView, NSDraggingSource {
             (excerpt as NSString).draw(in: rect.insetBy(dx: 5, dy: 5), withAttributes: [.font: NSFont.monospacedSystemFont(ofSize: 3.5, weight: .regular), .foregroundColor: NSColor.black, .paragraphStyle: p])
         }
         NSGraphicsContext.restoreGraphicsState()
-        (hover ? NSColor.systemTeal : NSColor.black.withAlphaComponent(0.25)).setStroke(); let border = NSBezierPath(roundedRect: rect, xRadius: 10, yRadius: 10); border.lineWidth = hover ? 1.5 : 1; border.stroke()
+        if file.isClipboardHistory { drawClipboardBadge(in: rect) }
+        (hover ? NSColor.systemTeal : file.isClipboardHistory ? NSColor.systemOrange : NSColor.black.withAlphaComponent(0.25)).setStroke(); let border = NSBezierPath(roundedRect: rect, xRadius: 10, yRadius: 10); border.lineWidth = hover ? 1.5 : 1; border.stroke()
         let pin = NSRect(x: 53, y: 55, width: 6, height: 20); NSGradient(starting: .white, ending: .gray)?.draw(in: NSBezierPath(roundedRect: pin, xRadius: 3, yRadius: 3), angle: 0)
         let p = NSMutableParagraphStyle(); p.alignment = .left; p.lineBreakMode = .byTruncatingMiddle
         let labelShadow = NSShadow(); labelShadow.shadowColor = .black.withAlphaComponent(0.85); labelShadow.shadowBlurRadius = 3; labelShadow.shadowOffset = NSSize(width: 0, height: -1)
@@ -262,6 +264,15 @@ final class FileCard: NSView, NSDraggingSource {
         (file.name as NSString).draw(in: NSRect(x: 3, y: max(0, rect.minY - 12), width: 102 - timeWidth - 5, height: 11), withAttributes: [.font: NSFont.systemFont(ofSize: 8, weight: .medium), .foregroundColor: NSColor.white, .paragraphStyle: p, .shadow: labelShadow])
         (date as NSString).draw(in: NSRect(x: 109 - timeWidth, y: max(0, rect.minY - 11), width: timeWidth + 2, height: 10), withAttributes: timeAttributes)
 
+    }
+    /// Clipboard-history cards carry an orange clipboard badge so they stand apart from ordinary Markdown notes.
+    private func drawClipboardBadge(in rect: NSRect) {
+        let badge = NSRect(x: rect.maxX - 22, y: rect.minY + 4, width: 18, height: 18)
+        NSColor.systemOrange.setFill(); NSBezierPath(roundedRect: badge, xRadius: 5, yRadius: 5).fill()
+        let config = NSImage.SymbolConfiguration(pointSize: 10, weight: .semibold).applying(.init(paletteColors: [.white]))
+        if let symbol = NSImage(systemSymbolName: "doc.on.clipboard.fill", accessibilityDescription: "剪贴板历史")?.withSymbolConfiguration(config) {
+            let size = symbol.size; symbol.draw(in: NSRect(x: badge.midX - size.width / 2, y: badge.midY - size.height / 2, width: size.width, height: size.height))
+        }
     }
     override func mouseDown(with event: NSEvent) { start = convert(event.locationInWindow, from: nil); didDrag = false }
     override func mouseDragged(with event: NSEvent) {

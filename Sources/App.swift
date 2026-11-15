@@ -11,6 +11,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var screenshotMonitor: ScreenshotMonitor?
     private var shelfHotKey: ShelfHotKey?
     private var latestHotKey: ShelfHotKey?
+    private var clipboardHotKey: ShelfHotKey?
+    private var clipboardHistory: ClipboardHistory!
+    private var clipboardMonitor: ClipboardMonitor?
+    private var clipboardPruneTimer: Timer?
+    private let monitorsClipboard: Bool
     private var settings: AppSettings
     private let monitorsScreenshots: Bool
     private var settingsController: SettingsController?
@@ -20,8 +25,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let sleepMenu: SleepMenuController
     private let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "未知"
     private let appBuild = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "未知"
-    init(store: FileStore? = nil, settings: AppSettings = .load(), monitorsScreenshots: Bool = true, powerService: any PowerManaging = PmsetService()) {
-        self.store = store; self.settings = settings; self.monitorsScreenshots = monitorsScreenshots
+    init(store: FileStore? = nil, settings: AppSettings = .load(), monitorsScreenshots: Bool = true, monitorsClipboard: Bool = true, powerService: any PowerManaging = PmsetService()) {
+        self.store = store; self.settings = settings; self.monitorsScreenshots = monitorsScreenshots; self.monitorsClipboard = monitorsClipboard
         sleepMenu = SleepMenuController(service: powerService)
         super.init()
     }
@@ -49,6 +54,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Task { @MainActor in guard let self, self.shelf.window?.isVisible == true else { return }; self.shelf.refresh() }
         }
         if monitorsScreenshots { startScreenshotMonitor() }
+        setUpClipboardHistory()
         registerHotKeys()
         sleepMenu.start()
         if CommandLine.arguments.contains("--show") { showShelf() }
@@ -62,6 +68,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             catch { NSLog("Screenshot import failed: %@", error.localizedDescription); return false }
         }
         screenshotMonitor?.start()
+    }
+    private func setUpClipboardHistory() {
+        clipboardHistory = ClipboardHistory(store: store, retentionDays: settings.clipboardRetentionDays)
+        clipboardHistory.onWrite = { [weak self] url in self?.editors[url.standardizedFileURL]?.reloadFromDiskIfClean() }
+        pruneClipboardHistory()
+        // Retention is enforced even when nothing new is copied.
+        let timer = Timer(timeInterval: 600, repeats: true) { [weak self] _ in Task { @MainActor in self?.pruneClipboardHistory() } }
+        clipboardPruneTimer = timer; RunLoop.main.add(timer, forMode: .common)
+        updateClipboardMonitor()
+    }
+    private func updateClipboardMonitor() {
+        guard monitorsClipboard, settings.recordsClipboard else { clipboardMonitor?.stop(); clipboardMonitor = nil; return }
+        guard clipboardMonitor == nil else { return }
+        clipboardMonitor = ClipboardMonitor { [weak self] text, source in
+            guard let self else { return }
+            do { try self.clipboardHistory.record(text, source: source) } catch { NSLog("Clipboard history save failed: %@", error.localizedDescription) }
+        }
+        clipboardMonitor?.start()
+    }
+    private func pruneClipboardHistory() {
+        do { try clipboardHistory.prune() } catch { NSLog("Clipboard history prune failed: %@", error.localizedDescription) }
+    }
+    @objc private func openClipboardHistory() {
+        do { openFile(try clipboardHistory.ensureFile()) } catch { showError(error) }
     }
     private func installMainMenu() {
         let main = NSMenu(); let app = NSMenuItem(); main.addItem(app); let appMenu = NSMenu(); app.submenu = appMenu
@@ -103,6 +133,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let latest = menu.addItem(withTitle: "打开最近访问文件（\(settings.latestShortcut.display)）", action: #selector(openLatestFile), keyEquivalent: "")
         latest.target = self
         if latestHotKey?.isRegistered != true { latest.title += "（全局快捷键不可用）" }
+        let clipboard = menu.addItem(withTitle: "打开剪贴板历史（\(settings.clipboardShortcut.display)）", action: #selector(openClipboardHistory), keyEquivalent: "")
+        clipboard.target = self
+        if clipboardHotKey?.isRegistered != true { clipboard.title += "（全局快捷键不可用）" }
         menu.addItem(.separator())
         for item in additionMenu().items { menu.addItem(item.copy() as! NSMenuItem) }
         for (title, action) in [("打开存储目录", #selector(revealStore)), ("设置…", #selector(showSettings)), ("关于 AgentAssistant", #selector(about))] { let item = menu.addItem(withTitle: title, action: action, keyEquivalent: ""); item.target = self }
@@ -156,7 +189,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func deleteFile(_ inputURL: URL) {
         let url = inputURL.standardizedFileURL
         if let editor = editors[url] { editor.window?.makeFirstResponder(nil); guard editor.flush() else { showError(AppError.message("当前修改保存失败，请先处理编辑窗口。")); return }; editor.close() }
-        do { try store.trash(url) } catch { showError(error) }
+        do {
+            // Removing the clipboard-history card also discards its hidden record, so copies are not resurrected.
+            if url.lastPathComponent == clipboardHistoryFileName { try clipboardHistory.clear() }
+            try store.trash(url)
+        } catch { showError(error) }
     }
     @objc private func pasteAction() { pasteFrom(.general) }
     @objc private func receiveDrop(_ notification: Notification) { if let pasteboard = notification.object as? NSPasteboard { pasteFrom(pasteboard) } }
@@ -181,27 +218,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         openFile(file.url)
     }
     private func registerHotKeys() {
-        shelfHotKey = nil; latestHotKey = nil
+        shelfHotKey = nil; latestHotKey = nil; clipboardHotKey = nil
         shelfHotKey = ShelfHotKey(shortcut: settings.shelfShortcut, identifier: 1) { [weak self] in self?.toggleShelf() }
         latestHotKey = ShelfHotKey(shortcut: settings.latestShortcut, identifier: 2) { [weak self] in self?.openLatestFile() }
+        clipboardHotKey = ShelfHotKey(shortcut: settings.clipboardShortcut, identifier: 3) { [weak self] in self?.openClipboardHistory() }
         updateToolTip()
     }
     private func updateToolTip() {
-        let failed = shelfHotKey?.isRegistered != true || latestHotKey?.isRegistered != true
-        statusItem.button?.toolTip = "AgentAssistant · \(settings.triggerCorner.title)展开 · \(settings.shelfShortcut.display) 展开 / 收起 · \(settings.latestShortcut.display) 打开最近文件 · 右键设置" + (failed ? "（快捷键不可用，详情见关于）" : "")
+        let failed = shelfHotKey?.isRegistered != true || latestHotKey?.isRegistered != true || clipboardHotKey?.isRegistered != true
+        statusItem.button?.toolTip = "AgentAssistant · \(settings.triggerCorner.title)展开 · \(settings.shelfShortcut.display) 展开 / 收起 · \(settings.latestShortcut.display) 打开最近文件 · \(settings.clipboardShortcut.display) 剪贴板历史 · 右键设置" + (failed ? "（快捷键不可用，详情见关于）" : "")
     }
     @objc private func showSettings() {
         shelf.hideShelf(); NSApp.activate(ignoringOtherApps: true)
         if let controller = settingsController { controller.showWindow(nil); controller.window?.makeKeyAndOrderFront(nil); return }
         // Release registrations so the recorder can receive the existing global shortcuts.
-        shelfHotKey = nil; latestHotKey = nil
+        shelfHotKey = nil; latestHotKey = nil; clipboardHotKey = nil
         let controller = SettingsController(settings: settings); settingsController = controller
         controller.onApply = { [weak self] value in
             guard let self else { return }
             let toggle = ShelfHotKey(shortcut: value.shelfShortcut, identifier: 1) { [weak self] in self?.toggleShelf() }
             let latest = ShelfHotKey(shortcut: value.latestShortcut, identifier: 2) { [weak self] in self?.openLatestFile() }
-            guard toggle.isRegistered, latest.isRegistered else { throw AppError.message("快捷键被系统或其他应用占用，请更换组合键。") }
+            let clipboard = ShelfHotKey(shortcut: value.clipboardShortcut, identifier: 3) { [weak self] in self?.openClipboardHistory() }
+            guard toggle.isRegistered, latest.isRegistered, clipboard.isRegistered else { throw AppError.message("快捷键被系统或其他应用占用，请更换组合键。") }
             try value.save(); self.settings = value; self.shelf.triggerCorner = value.triggerCorner
+            self.clipboardHistory.retentionDays = value.clipboardRetentionDays; self.pruneClipboardHistory(); self.updateClipboardMonitor()
             self.pointerWasInMenuBar = self.triggerScreen(at: NSEvent.mouseLocation) != nil
         }
         controller.onClose = { [weak self] in self?.settingsController = nil; self?.registerHotKeys() }
@@ -220,7 +260,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             alert.messageText = "AgentAssistant \(self.appVersion)（构建 \(self.appBuild)）"
             let toggleStatus = self.shelfHotKey?.isRegistered == true ? "可用" : "不可用（设置中暂停，或已被占用）"
             let latestStatus = self.latestHotKey?.isRegistered == true ? "可用" : "不可用（设置中暂停，或已被占用）"
-            alert.informativeText = "临时编辑中心\n\n鼠标移入屏幕\(self.settings.triggerCorner.title)展开吊栏。\n停留时保持显示，离开后 3 秒收起。\n\n展开 / 收起：\(self.settings.shelfShortcut.display) · \(toggleStatus)\n打开最近文件：\(self.settings.latestShortcut.display) · \(latestStatus)\n可在设置中修改快捷键和触发位置。\n\n截图监听：\(self.screenshotMonitor?.status ?? "未启动")\n\n存储目录：\(self.store.directory.path)"
+            let clipboardStatus = self.clipboardHotKey?.isRegistered == true ? "可用" : "不可用（设置中暂停，或已被占用）"
+            let clipboardRecording = self.clipboardMonitor == nil ? "已关闭" : "已开启，保留 \(self.settings.clipboardRetentionDays) 天"
+            alert.informativeText = "临时编辑中心\n\n鼠标移入屏幕\(self.settings.triggerCorner.title)展开吊栏。\n停留时保持显示，离开后 3 秒收起。\n\n展开 / 收起：\(self.settings.shelfShortcut.display) · \(toggleStatus)\n打开最近文件：\(self.settings.latestShortcut.display) · \(latestStatus)\n剪贴板历史：\(self.settings.clipboardShortcut.display) · \(clipboardStatus)（记录\(clipboardRecording)）\n可在设置中修改快捷键和触发位置。\n\n截图监听：\(self.screenshotMonitor?.status ?? "未启动")\n\n存储目录：\(self.store.directory.path)"
             alert.addButton(withTitle: "好")
             alert.window.level = .floating
             alert.window.center()

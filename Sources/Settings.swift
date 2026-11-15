@@ -7,6 +7,8 @@ struct KeyboardShortcut: Codable, Equatable {
     let keyLabel: String
     static let shelf = KeyboardShortcut(keyCode: UInt32(kVK_Space), modifiers: UInt32(controlKey | optionKey), keyLabel: "Space")
     static let latest = KeyboardShortcut(keyCode: UInt32(kVK_Return), modifiers: UInt32(controlKey | optionKey), keyLabel: "Return")
+    static let clipboard = KeyboardShortcut(keyCode: UInt32(kVK_ANSI_V), modifiers: UInt32(controlKey | optionKey), keyLabel: "V")
+    func sameKeys(as other: KeyboardShortcut) -> Bool { keyCode == other.keyCode && modifiers == other.modifiers }
     var display: String {
         (modifiers & UInt32(controlKey) != 0 ? "⌃" : "") +
         (modifiers & UInt32(optionKey) != 0 ? "⌥" : "") +
@@ -47,17 +49,42 @@ enum TriggerCorner: String, Codable, CaseIterable {
 }
 
 struct AppSettings: Codable, Equatable {
+    static let retentionChoices = [1, 2, 3, 5, 7, 14, 30]
     var shelfShortcut = KeyboardShortcut.shelf
     var latestShortcut = KeyboardShortcut.latest
     var triggerCorner = TriggerCorner.topLeft
+    var clipboardShortcut = KeyboardShortcut.clipboard
+    var recordsClipboard = true
+    var clipboardRetentionDays = 3
+    init(shelfShortcut: KeyboardShortcut = .shelf, latestShortcut: KeyboardShortcut = .latest, triggerCorner: TriggerCorner = .topLeft,
+         clipboardShortcut: KeyboardShortcut = .clipboard, recordsClipboard: Bool = true, clipboardRetentionDays: Int = 3) {
+        self.shelfShortcut = shelfShortcut; self.latestShortcut = latestShortcut; self.triggerCorner = triggerCorner
+        self.clipboardShortcut = clipboardShortcut; self.recordsClipboard = recordsClipboard; self.clipboardRetentionDays = clipboardRetentionDays
+    }
+    // Settings saved by older versions lack the clipboard keys; decode them as defaults instead of discarding everything.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        shelfShortcut = try c.decode(KeyboardShortcut.self, forKey: .shelfShortcut)
+        latestShortcut = try c.decode(KeyboardShortcut.self, forKey: .latestShortcut)
+        triggerCorner = try c.decode(TriggerCorner.self, forKey: .triggerCorner)
+        clipboardShortcut = try c.decodeIfPresent(KeyboardShortcut.self, forKey: .clipboardShortcut) ?? .clipboard
+        recordsClipboard = try c.decodeIfPresent(Bool.self, forKey: .recordsClipboard) ?? true
+        clipboardRetentionDays = try c.decodeIfPresent(Int.self, forKey: .clipboardRetentionDays) ?? 3
+    }
     // Keep the legacy preference key so existing shortcuts and corner choices survive.
     static func load(from defaults: UserDefaults = .standard) -> AppSettings {
-        guard let data = defaults.data(forKey: "TCenter.settings"), let value = try? JSONDecoder().decode(Self.self, from: data),
+        guard let data = defaults.data(forKey: "TCenter.settings"), var value = try? JSONDecoder().decode(Self.self, from: data),
               value.shelfShortcut.isValid, value.latestShortcut.isValid,
               !value.shortcutsConflict else { return Self() }
+        if !value.clipboardShortcut.isValid || value.clipboardShortcutConflicts { value.clipboardShortcut = .clipboard }
+        // The default itself may collide with a user's existing shortcut; fall back to a shifted variant.
+        if value.clipboardShortcutConflicts { value.clipboardShortcut = KeyboardShortcut(keyCode: UInt32(kVK_ANSI_V), modifiers: UInt32(controlKey | optionKey | shiftKey), keyLabel: "V") }
+        value.clipboardRetentionDays = min(30, max(1, value.clipboardRetentionDays))
         return value
     }
-    var shortcutsConflict: Bool { shelfShortcut.keyCode == latestShortcut.keyCode && shelfShortcut.modifiers == latestShortcut.modifiers }
+    var shortcutsConflict: Bool { shelfShortcut.sameKeys(as: latestShortcut) }
+    var clipboardShortcutConflicts: Bool { clipboardShortcut.sameKeys(as: shelfShortcut) || clipboardShortcut.sameKeys(as: latestShortcut) }
+    var anyShortcutConflict: Bool { shortcutsConflict || clipboardShortcutConflicts }
     func save(to defaults: UserDefaults = .standard) throws { defaults.set(try JSONEncoder().encode(self), forKey: "TCenter.settings") }
 }
 
@@ -89,14 +116,18 @@ final class ShortcutRecorder: NSButton {
 final class SettingsController: NSWindowController, NSWindowDelegate {
     private let shelfRecorder: ShortcutRecorder
     private let latestRecorder: ShortcutRecorder
+    private let clipboardRecorder: ShortcutRecorder
     private let corner = NSPopUpButton()
+    private let retention = NSPopUpButton()
+    private let recordsClipboard = NSButton(checkboxWithTitle: "记录复制的文字（不含文件）", target: nil, action: nil)
     private let message = NSTextField(wrappingLabelWithString: "")
     var onApply: ((AppSettings) throws -> Void)?
     var onClose: (() -> Void)?
     init(settings: AppSettings) {
         shelfRecorder = ShortcutRecorder(shortcut: settings.shelfShortcut)
         latestRecorder = ShortcutRecorder(shortcut: settings.latestShortcut)
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 340), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        clipboardRecorder = ShortcutRecorder(shortcut: settings.clipboardShortcut)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 420), styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = "AgentAssistant 设置"; window.isReleasedWhenClosed = false
         super.init(window: window); window.delegate = self; window.center(); window.contentView = EditorBackgroundView()
         let root = NSStackView(); root.orientation = .vertical; root.alignment = .leading; root.spacing = 16
@@ -104,12 +135,15 @@ final class SettingsController: NSWindowController, NSWindowDelegate {
         NSLayoutConstraint.activate([root.leadingAnchor.constraint(equalTo: window.contentView!.leadingAnchor, constant: 24), root.trailingAnchor.constraint(equalTo: window.contentView!.trailingAnchor, constant: -24), root.topAnchor.constraint(equalTo: window.contentView!.topAnchor, constant: 24)])
         corner.addItems(withTitles: TriggerCorner.allCases.map(\.title))
         corner.selectItem(at: TriggerCorner.allCases.firstIndex(of: settings.triggerCorner)!)
-        for (title, control) in [("展开 / 收起吊栏", shelfRecorder as NSView), ("打开最近访问文件", latestRecorder as NSView), ("鼠标触发位置", corner as NSView)] {
+        Self.fillRetention(retention, days: settings.clipboardRetentionDays)
+        recordsClipboard.state = settings.recordsClipboard ? .on : .off
+        for (title, control) in [("展开 / 收起吊栏", shelfRecorder as NSView), ("打开最近访问文件", latestRecorder as NSView), ("鼠标触发位置", corner as NSView),
+                                 ("打开剪贴板历史", clipboardRecorder as NSView), ("剪贴板历史保留", retention as NSView), ("剪贴板记录", recordsClipboard as NSView)] {
             let label = NSTextField(labelWithString: title); label.widthAnchor.constraint(equalToConstant: 180).isActive = true
             control.widthAnchor.constraint(equalToConstant: 230).isActive = true
             let row = NSStackView(views: [label, control]); row.spacing = 12; root.addArrangedSubview(row)
         }
-        let hint = NSTextField(wrappingLabelWithString: "点击快捷键后按新的组合键，Esc 取消录入。设置窗口打开时，全局快捷键暂停。鼠标进入所选屏幕角落的 32 × 32 点区域时展开吊栏。")
+        let hint = NSTextField(wrappingLabelWithString: "点击快捷键后按新的组合键，Esc 取消录入。设置窗口打开时，全局快捷键暂停。鼠标进入所选屏幕角落的 32 × 32 点区域时展开吊栏。剪贴板历史保存在“\(clipboardHistoryFileName)”，超过保留天数的记录会自动删除。")
         hint.font = .systemFont(ofSize: 12); hint.textColor = .secondaryLabelColor; root.addArrangedSubview(hint); hint.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true
         message.font = .systemFont(ofSize: 12); message.textColor = .systemRed; root.addArrangedSubview(message); message.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true
         let reset = NSButton(title: "恢复默认", target: self, action: #selector(resetSettings))
@@ -118,12 +152,22 @@ final class SettingsController: NSWindowController, NSWindowDelegate {
         let buttons = NSStackView(views: [reset, cancel, save]); buttons.spacing = 12; root.addArrangedSubview(buttons)
     }
     required init?(coder: NSCoder) { fatalError() }
-    @objc private func resetSettings() { shelfRecorder.shortcut = .shelf; latestRecorder.shortcut = .latest; corner.selectItem(at: 0); message.stringValue = "" }
+    private static func fillRetention(_ popup: NSPopUpButton, days: Int) {
+        let choices = Set(AppSettings.retentionChoices + [days]).sorted()
+        popup.removeAllItems()
+        for value in choices { popup.addItem(withTitle: "\(value) 天"); popup.lastItem?.tag = value }
+        popup.selectItem(withTag: days)
+    }
+    @objc private func resetSettings() {
+        shelfRecorder.shortcut = .shelf; latestRecorder.shortcut = .latest; clipboardRecorder.shortcut = .clipboard; corner.selectItem(at: 0)
+        Self.fillRetention(retention, days: 3); recordsClipboard.state = .on; message.stringValue = ""
+    }
     @objc private func cancelSettings() { close() }
     @objc private func applySettings() {
-        guard !shelfRecorder.recording, !latestRecorder.recording else { message.stringValue = "请先完成快捷键录入，或按 Esc 取消录入。"; return }
-        let value = AppSettings(shelfShortcut: shelfRecorder.shortcut, latestShortcut: latestRecorder.shortcut, triggerCorner: TriggerCorner.allCases[corner.indexOfSelectedItem])
-        guard !value.shortcutsConflict else { message.stringValue = "两个功能不能使用相同的快捷键。"; return }
+        guard !shelfRecorder.recording, !latestRecorder.recording, !clipboardRecorder.recording else { message.stringValue = "请先完成快捷键录入，或按 Esc 取消录入。"; return }
+        let value = AppSettings(shelfShortcut: shelfRecorder.shortcut, latestShortcut: latestRecorder.shortcut, triggerCorner: TriggerCorner.allCases[corner.indexOfSelectedItem],
+                                clipboardShortcut: clipboardRecorder.shortcut, recordsClipboard: recordsClipboard.state == .on, clipboardRetentionDays: retention.selectedTag())
+        guard !value.anyShortcutConflict else { message.stringValue = "不同功能不能使用相同的快捷键。"; return }
         do { try onApply?(value); close() } catch { message.stringValue = error.localizedDescription }
     }
     func windowWillClose(_ notification: Notification) { onClose?() }

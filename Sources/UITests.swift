@@ -66,6 +66,8 @@ import Carbon
     let png = NSBitmapImageRep(data: image.tiffRepresentation!)!.representation(using: .png, properties: [:])!
     let imageURL = try store.create(name: "06-图片.png", data: png)
     let imageEditor = try EditorController(file: MountedFile(url: imageURL), store: store); try render(imageEditor.window!, "06-image"); imageEditor.close()
+    try ClipboardHistory(store: store, retentionDays: 3).record("func demo() {\n    print(\"剪贴板\")\n}", source: ClipboardSource(path: "/tmp/demo.swift", bundleIdentifier: nil))
+    guard store.files().contains(where: { $0.isClipboardHistory }) else { throw AppError.message("Clipboard history card missing from shelf") }
     let shelf = ShelfController(store: store)
     let menuDelegate = AppDelegate(); shelf.addMenu = menuDelegate.additionMenu()
     guard let newItems = shelf.addMenu?.items.first?.submenu?.items,
@@ -125,7 +127,7 @@ import Carbon
     try render(settingsUI.window!, "settings")
     let settingsViews = descendants(settingsUI.window!.contentView!)
     let recorders = settingsViews.compactMap { $0 as? ShortcutRecorder }
-    guard recorders.count == 2, let cornerPopup = settingsViews.first(where: { $0 is NSPopUpButton }) as? NSPopUpButton,
+    guard recorders.count == 3, let cornerPopup = settingsViews.first(where: { $0 is NSPopUpButton }) as? NSPopUpButton,
           let saveButton = settingsViews.compactMap({ $0 as? NSButton }).first(where: { $0.title == "保存" }) else { throw AppError.message("Settings controls missing") }
     recorders[1].performClick(nil)
     let recordedEvent = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.command, .control], timestamp: 0, windowNumber: settingsUI.window!.windowNumber, context: nil, characters: "j", charactersIgnoringModifiers: "j", isARepeat: false, keyCode: 38)!
@@ -213,9 +215,10 @@ import Carbon
     let integrationStore = try FileStore(directory: output.appendingPathComponent("actions-\(UUID().uuidString)"))
     let integrationSettings = AppSettings(
         shelfShortcut: KeyboardShortcut(keyCode: 80, modifiers: UInt32(controlKey | optionKey | cmdKey), keyLabel: "F19"),
-        latestShortcut: KeyboardShortcut(keyCode: 79, modifiers: UInt32(controlKey | optionKey | cmdKey), keyLabel: "F18"), triggerCorner: .topLeft)
+        latestShortcut: KeyboardShortcut(keyCode: 79, modifiers: UInt32(controlKey | optionKey | cmdKey), keyLabel: "F18"), triggerCorner: .topLeft,
+        clipboardShortcut: KeyboardShortcut(keyCode: 64, modifiers: UInt32(controlKey | optionKey | cmdKey), keyLabel: "F17"))
     let demoPower = DemoPowerService()
-    let appDelegate = AppDelegate(store: integrationStore, settings: integrationSettings, monitorsScreenshots: false, powerService: demoPower)
+    let appDelegate = AppDelegate(store: integrationStore, settings: integrationSettings, monitorsScreenshots: false, monitorsClipboard: false, powerService: demoPower)
     appDelegate.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
     defer { withExtendedLifetime(appDelegate) {} }
     let powerMenu = appDelegate.contextMenu()
@@ -267,7 +270,12 @@ import Carbon
     try sendHotKey(2)
     guard NSApp.windows.filter({ $0.representedURL == note.url }).count == 1 else { throw AppError.message("Latest shortcut duplicated existing editor") }
     try sendHotKey(1); try sendHotKey(1)
+    try sendHotKey(3)
+    let clipboardURL = integrationStore.directory.appendingPathComponent(clipboardHistoryFileName)
+    guard let clipboardWindow = NSApp.windows.first(where: { $0.representedURL?.standardizedFileURL == clipboardURL.standardizedFileURL && $0.isVisible }) else { throw AppError.message("Clipboard shortcut did not open the clipboard history") }
+    guard appDelegate.contextMenu().items.contains(where: { $0.title.hasPrefix("打开剪贴板历史（⌃⌥⌘F17）") }) else { throw AppError.message("Clipboard history menu entry missing") }
+    clipboardWindow.performClose(nil)
     noteWindow.performClose(nil); previewWindow.performClose(nil)
-    print("PASS: Carbon registration/conflict and independent action routing; actual application Markdown paste; latest text editor/image preview; minimized-window restore; injected editor activation callback; existing-window reuse; empty store")
+    print("PASS: Carbon registration/conflict and independent action routing; actual application Markdown paste; latest text editor/image preview; minimized-window restore; injected editor activation callback; existing-window reuse; empty store; clipboard-history shortcut and menu entry")
     print("Rendered shelf, settings and MD / JSON / XML / CSV / TXT editors; checked alternate views, text and table persistence. Artifacts: \(output.path)")
 }
