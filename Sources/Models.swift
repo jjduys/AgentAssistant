@@ -10,6 +10,7 @@ struct MountedFile {
     var name: String { url.lastPathComponent }
     var ext: String { url.pathExtension.lowercased() }
     var isImage: Bool { imageExtensions.contains(ext) }
+    var isClipboardHistory: Bool { name == clipboardHistoryFileName }
     var modified: Date { (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast }
 }
 

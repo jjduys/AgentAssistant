@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 
 func runSelfTests() throws {
     func check(_ condition: @autoclosure () throws -> Bool, _ message: String) throws { if try !condition() { throw AppError.message(message) } }
@@ -80,6 +80,20 @@ func runSelfTests() throws {
     try check(settings.shortcutsConflict, "Duplicate shortcuts detected")
     try settings.save(to: defaults)
     try check(AppSettings.load(from: defaults) == AppSettings(), "Invalid persisted shortcuts fall back to defaults")
+    // Settings written before clipboard history existed must keep their shortcuts and gain clipboard defaults.
+    let legacy = "{\"shelfShortcut\":{\"keyCode\":49,\"modifiers\":6144,\"keyLabel\":\"Space\"},\"latestShortcut\":{\"keyCode\":12,\"modifiers\":4352,\"keyLabel\":\"Q\"},\"triggerCorner\":\"bottomLeft\"}"
+    defaults.set(Data(legacy.utf8), forKey: "TCenter.settings")
+    let migrated = AppSettings.load(from: defaults)
+    try check(migrated.triggerCorner == .bottomLeft && migrated.latestShortcut.keyLabel == "Q" && migrated.clipboardShortcut == .clipboard && migrated.recordsClipboard && migrated.clipboardRetentionDays == 3, "Legacy settings gain clipboard defaults")
+    var clipSettings = AppSettings(); clipSettings.clipboardShortcut = clipSettings.latestShortcut
+    try check(clipSettings.anyShortcutConflict, "Clipboard shortcut conflict detected")
+    clipSettings.clipboardShortcut = .clipboard; clipSettings.clipboardRetentionDays = 99; clipSettings.recordsClipboard = false; try clipSettings.save(to: defaults)
+    let reloaded = AppSettings.load(from: defaults)
+    try check(reloaded.clipboardRetentionDays == 30 && !reloaded.recordsClipboard, "Clipboard retention clamps and toggle persists")
+    var colliding = AppSettings(); colliding.shelfShortcut = .clipboard; colliding.clipboardShortcut = .clipboard; try colliding.save(to: defaults)
+    let fixed = AppSettings.load(from: defaults)
+    try check(fixed.shelfShortcut == .clipboard && !fixed.anyShortcutConflict, "Clipboard default yields to an existing shortcut")
+    try checkClipboardHistory(temporary.appendingPathComponent("clipboard"), check)
     for frame in [CGRect(x: 0, y: 0, width: 1440, height: 900), CGRect(x: -1920, y: -400, width: 1920, height: 1080)] {
         let corners: [(TriggerCorner, CGPoint)] = [(.topLeft, CGPoint(x: frame.minX + 1, y: frame.maxY - 1)), (.topRight, CGPoint(x: frame.maxX - 1, y: frame.maxY - 1)), (.bottomLeft, CGPoint(x: frame.minX + 1, y: frame.minY + 1)), (.bottomRight, CGPoint(x: frame.maxX - 1, y: frame.minY + 1))]
         for (corner, point) in corners {
@@ -89,6 +103,46 @@ func runSelfTests() throws {
             try check(frame.contains(corner.shelfFrame(in: frame)), "Shelf stays within the selected screen")
         }
     }
+    print("PASS: clipboard history newest-first order, timestamp separators without source paths, verbatim text, code fences, retention, dedup, shelf badge flag, legacy settings migration")
     print("PASS: Markdown paste; access order, restart persistence, read isolation, deletion, new/imported/edited/image files; configurable shortcut persistence/conflicts; four-corner geometry on offset screens; 3-day shelf retention, 7-card strip with newest on the right")
     print("PASS: CSV quoting, multiline, CRLF, invalid syntax; JSON scalar/container roundtrip; XML attributes/escaping; unique names, atomic save, sorting, import copy")
+}
+
+private func checkClipboardHistory(_ directory: URL, _ check: (@autoclosure () throws -> Bool, String) throws -> Void) throws {
+    let store = try FileStore(directory: directory)
+    let history = ClipboardHistory(store: store, retentionDays: 3)
+    try check(!FileManager.default.fileExists(atPath: history.fileURL.path), "No history file before the first copy")
+    let now = Date()
+    let swift = ClipboardSource(path: "/Users/demo/project/main.swift", bundleIdentifier: "com.apple.dt.Xcode")
+    let note = ClipboardSource(path: "/Applications/Notes.app", bundleIdentifier: "com.apple.Notes")
+    try history.record("旧内容", source: note, at: now.addingTimeInterval(-4 * 86_400))
+    try history.record("  第一行\n    缩进保留\n\n**粗体**", source: note, at: now.addingTimeInterval(-60))
+    try history.record("let a = 1;\nprint(\"```\")\n", source: swift, at: now)
+    let text = try readText(history.fileURL)
+    try check(!text.contains("旧内容"), "Entries older than the retention window are dropped")
+    try check(text.range(of: "let a = 1;")!.lowerBound < text.range(of: "第一行")!.lowerBound, "Newest entry comes first")
+    try check(!text.contains("/Users/demo") && !text.contains("Notes.app"), "Source paths are not written")
+    try check(text.contains("````swift\nlet a = 1;\nprint(\"```\")\n````\n"), "Code is fenced with a fence longer than its content's backticks")
+    try check(text.contains("\n\n  第一行\n    缩进保留\n\n**粗体**\n"), "Ordinary text is kept verbatim")
+    let stamp = DateFormatter(); stamp.locale = Locale(identifier: "zh_CN"); stamp.dateFormat = "yyyy-MM-dd HH:mm:ss"
+    try check(text.contains("### \(stamp.string(from: now))\n\n````swift"), "Entry header is the timestamp")
+    try check(store.files().contains { $0.isClipboardHistory }, "History file appears on the shelf with its marker")
+    try history.record("let a = 1;\nprint(\"```\")\n", source: swift, at: now.addingTimeInterval(5))
+    try check(history.entries.count == 2, "Copying the same text again does not duplicate it")
+    try check(ClipboardFormatter.language(for: "func a() {\n  return 1\n}", source: note) == "", "Code heuristic fences unknown-source code")
+    try check(ClipboardFormatter.language(for: "这是一段普通文字。\n第二行。", source: note) == nil, "Prose is not fenced")
+    try check(ClipboardFormatter.language(for: "ls -la", source: ClipboardSource(path: "/System/Applications/Utilities/Terminal.app", bundleIdentifier: "com.apple.Terminal")) == "", "Terminal copies are fenced")
+    let reopened = ClipboardHistory(store: store, retentionDays: 1)
+    try check(reopened.entries.count == 2, "History survives restart")
+    try reopened.prune(now: now.addingTimeInterval(2 * 86_400))
+    try check(reopened.entries.isEmpty && readText(reopened.fileURL).contains("暂无记录"), "Shortening retention prunes old entries")
+    let board = NSPasteboard.withUniqueName(); defer { board.releaseGlobally() }
+    board.clearContents(); board.setString("文字", forType: .string)
+    try check(ClipboardMonitor.copiedText(from: board) == "文字", "Plain text copies are captured")
+    board.clearContents(); board.writeObjects([directory as NSURL])
+    try check(ClipboardMonitor.copiedText(from: board) == nil, "File copies are ignored")
+    board.clearContents(); board.declareTypes([.string, .init("org.nspasteboard.ConcealedType")], owner: nil); board.setString("secret", forType: .string)
+    try check(ClipboardMonitor.copiedText(from: board) == nil, "Password-manager copies are ignored")
+    try reopened.clear()
+    try check(ClipboardHistory(store: store, retentionDays: 3).entries.isEmpty, "Clearing removes the hidden record")
 }
