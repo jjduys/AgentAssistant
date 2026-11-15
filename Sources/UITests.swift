@@ -77,6 +77,23 @@ import Carbon
           !addButton.isHidden, addButton.isEnabled, addButton.target === shelf, addButton.action != nil,
           let scrollView = descendants(shelf.window!.contentView!).first(where: { $0 is NSScrollView }),
           addButton.frame.width == 28, addButton.frame.minX > scrollView.frame.maxX else { throw AppError.message("Shelf add button missing or overlapping files") }
+    let stripStore = try FileStore(directory: output.appendingPathComponent("strip-fixtures-\(UUID().uuidString)"))
+    let stripNow = Date()
+    for index in 0..<10 { try stripStore.recordAccess(try stripStore.create(name: "卡片-\(index).md", data: Data("# \(index)".utf8)), at: stripNow.addingTimeInterval(Double(index - 10))) }
+    try stripStore.recordAccess(try stripStore.create(name: "过期.md", data: Data("old".utf8)), at: stripNow.addingTimeInterval(-FileStore.shelfRetention - 60))
+    let stripShelf = ShelfController(store: stripStore); stripShelf.addMenu = menuDelegate.additionMenu(); stripShelf.present(on: NSScreen.main!)
+    try render(stripShelf.window!, "shelf-folded")
+    guard let stripScroll = descendants(stripShelf.window!.contentView!).first(where: { $0 is NSScrollView }) as? NSScrollView else { throw AppError.message("Strip scroll view missing") }
+    let stripCards = descendants(stripScroll).compactMap { $0 as? FileCard }
+    let visibleRect = stripScroll.contentView.bounds
+    let shown = stripCards.filter { visibleRect.contains(NSPoint(x: $0.frame.midX, y: $0.frame.midY)) }.sorted { $0.frame.minX < $1.frame.minX }.map(\.file.name)
+    let expected = (3..<10).map { "卡片-\($0).md" }
+    guard stripCards.count == 10, !stripCards.contains(where: { $0.file.name == "过期.md" }) else { throw AppError.message("Shelf must hide files older than 3 days: \(stripCards.map(\.file.name))") }
+    guard shown == expected, stripShelf.foldedCounts == (older: 3, newer: 0) else { throw AppError.message("Shelf must show newest 7 (old→new, left→right) and fold the oldest: \(shown), \(stripShelf.foldedCounts)") }
+    guard descendants(stripShelf.window!.contentView!).contains(where: { ($0 as? NSTextField)?.stringValue == "‹ 更早 3" && !$0.isHidden }) else { throw AppError.message("Folded indicator missing") }
+    stripScroll.contentView.scroll(to: .zero); stripScroll.reflectScrolledClipView(stripScroll.contentView)
+    guard stripShelf.foldedCounts == (older: 0, newer: 3) else { throw AppError.message("Scrolling left must reveal the oldest cards: \(stripShelf.foldedCounts)") }
+    stripShelf.close()
     let emptyStorage = output.appendingPathComponent("empty-fixtures-\(UUID().uuidString)")
     let emptyShelf = ShelfController(store: try FileStore(directory: emptyStorage)); emptyShelf.addMenu = menuDelegate.additionMenu(); emptyShelf.present(on: NSScreen.main!)
     try render(emptyShelf.window!, "shelf-empty")

@@ -15,6 +15,21 @@ struct ShelfDismissalPolicy {
     func shouldDismiss(at now: Date) -> Bool { deadline.map { now >= $0 } ?? false }
 }
 
+/// 吊栏卡片条的几何：左旧右新，最多同时显示 7 张，其余折叠在左侧。
+struct ShelfStripLayout {
+    static let cardWidth: CGFloat = 112, spacing: CGFloat = 24, inset: CGFloat = 8, maxVisible = 7
+    static var pitch: CGFloat { cardWidth + spacing }
+    static func visibleCount(total: Int, availableWidth: CGFloat) -> Int {
+        guard total > 0 else { return 0 }
+        let fit = Int(floor((availableWidth - 2 * inset + spacing) / pitch))
+        return max(1, min(maxVisible, total, fit))
+    }
+    static func width(cards count: Int) -> CGFloat { count <= 0 ? 0 : CGFloat(count) * pitch - spacing + 2 * inset }
+    static func cardX(_ index: Int) -> CGFloat { inset + CGFloat(index) * pitch }
+    /// 初始滚动位置：贴住最右侧，让最新的文件可见。
+    static func newestOffset(total: Int, viewport: CGFloat) -> CGFloat { max(0, width(cards: total) - viewport) }
+}
+
 final class ShelfController: NSWindowController {
     let store: FileStore
     var openFile: ((URL) -> Void)?
@@ -38,6 +53,12 @@ final class ShelfController: NSWindowController {
     private var outsideMonitor: Any?
     private var localMonitor: Any?
     private var signature = ""
+    private let olderLabel = NSTextField(labelWithString: "")
+    private let newerLabel = NSTextField(labelWithString: "")
+    private var stripWidth: NSLayoutConstraint!
+    private var boundsObserver: Any?
+    /// 折叠提示与卡片条两侧预留的宽度。
+    private static let foldGutter: CGFloat = 76
     init(store: FileStore) {
         self.store = store
         let panel = ShelfPanel(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 84), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
@@ -51,11 +72,49 @@ final class ShelfController: NSWindowController {
         canvas.addSubview(scrollView)
         addButton.translatesAutoresizingMaskIntoConstraints = false; addButton.image = NSImage(systemSymbolName: "plus.circle.fill", accessibilityDescription: "添加"); addButton.contentTintColor = .white; addButton.isBordered = false; addButton.toolTip = "添加：新建文档或导入文件"; addButton.setAccessibilityLabel("添加"); addButton.target = self; addButton.action = #selector(showAddMenu); canvas.addSubview(addButton)
         empty.translatesAutoresizingMaskIntoConstraints = false; empty.font = .systemFont(ofSize: 11, weight: .medium); empty.textColor = .white.withAlphaComponent(0.65); canvas.addSubview(empty)
+        for (label, tip) in [(olderLabel, "鼠标移到左侧查看更早的文件"), (newerLabel, "鼠标移到右侧回到最新的文件")] {
+            label.translatesAutoresizingMaskIntoConstraints = false; label.font = .systemFont(ofSize: 10, weight: .medium); label.textColor = .white.withAlphaComponent(0.75); label.toolTip = tip; label.isHidden = true; canvas.addSubview(label)
+        }
+        olderLabel.alignment = .right; newerLabel.alignment = .left
+        let centered = scrollView.centerXAnchor.constraint(equalTo: canvas.centerXAnchor); centered.priority = .defaultHigh
+        stripWidth = scrollView.widthAnchor.constraint(equalToConstant: 0); stripWidth.priority = .init(999)
         NSLayoutConstraint.activate([
-            scrollView.topAnchor.constraint(equalTo: canvas.topAnchor, constant: 4), scrollView.leadingAnchor.constraint(equalTo: canvas.leadingAnchor, constant: 12), scrollView.trailingAnchor.constraint(equalTo: addButton.leadingAnchor, constant: -12), scrollView.bottomAnchor.constraint(equalTo: canvas.bottomAnchor, constant: -4),
+            scrollView.topAnchor.constraint(equalTo: canvas.topAnchor, constant: 4), scrollView.bottomAnchor.constraint(equalTo: canvas.bottomAnchor, constant: -4),
+            scrollView.leadingAnchor.constraint(greaterThanOrEqualTo: canvas.leadingAnchor, constant: Self.foldGutter), scrollView.trailingAnchor.constraint(lessThanOrEqualTo: addButton.leadingAnchor, constant: -Self.foldGutter), centered, stripWidth,
             addButton.trailingAnchor.constraint(equalTo: canvas.trailingAnchor, constant: -12), addButton.centerYAnchor.constraint(equalTo: scrollView.centerYAnchor), addButton.widthAnchor.constraint(equalToConstant: 28), addButton.heightAnchor.constraint(equalToConstant: 28),
-            empty.centerXAnchor.constraint(equalTo: scrollView.centerXAnchor), empty.centerYAnchor.constraint(equalTo: scrollView.centerYAnchor)
+            empty.centerXAnchor.constraint(equalTo: canvas.centerXAnchor), empty.centerYAnchor.constraint(equalTo: scrollView.centerYAnchor),
+            olderLabel.trailingAnchor.constraint(equalTo: scrollView.leadingAnchor, constant: -6), olderLabel.centerYAnchor.constraint(equalTo: scrollView.centerYAnchor, constant: 6),
+            newerLabel.leadingAnchor.constraint(equalTo: scrollView.trailingAnchor, constant: 6), newerLabel.centerYAnchor.constraint(equalTo: scrollView.centerYAnchor, constant: 6)
         ])
+        scrollView.contentView.postsBoundsChangedNotifications = true
+        boundsObserver = NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: scrollView.contentView, queue: .main) { [weak self] _ in self?.updateFoldLabels() }
+    }
+    /// 当前折叠在左侧（更早）和右侧（更新）的卡片数量。
+    var foldedCounts: (older: Int, newer: Int) {
+        let origin = scrollView.contentView.bounds.minX, width = scrollView.contentView.bounds.width
+        let mids = cards.subviews.map(\.frame.midX)
+        return (mids.filter { $0 < origin }.count, mids.filter { $0 > origin + width }.count)
+    }
+    private func updateFoldLabels() {
+        let (older, newer) = foldedCounts
+        olderLabel.stringValue = "‹ 更早 \(older)"; olderLabel.isHidden = older == 0
+        newerLabel.stringValue = "更新 \(newer) ›"; newerLabel.isHidden = newer == 0
+    }
+    /// 鼠标停在卡片条左侧（或折叠提示上）时向更早的文件滚动，停在右侧时回到更新的文件。
+    private func autoScrollTowardPointer() {
+        guard let window, window.isVisible, !dragActive, NSEvent.pressedMouseButtons == 0 else { return }
+        let strip = window.convertToScreen(scrollView.convert(scrollView.bounds, to: nil)), mouse = NSEvent.mouseLocation
+        guard mouse.y >= strip.minY, mouse.y <= strip.maxY else { return }
+        let clip = scrollView.contentView, maxX = max(0, cards.frame.width - clip.bounds.width), edge: CGFloat = 40, step: CGFloat = 34
+        var target = clip.bounds.minX
+        if mouse.x >= strip.minX - Self.foldGutter, mouse.x <= strip.minX + edge { target = max(0, target - step) }
+        else if mouse.x >= strip.maxX - edge, mouse.x <= strip.maxX + Self.foldGutter { target = min(maxX, target + step) }
+        guard target != clip.bounds.minX else { return }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.1; context.timingFunction = CAMediaTimingFunction(name: .linear)
+            clip.animator().setBoundsOrigin(NSPoint(x: target, y: 0))
+        }
+        scrollView.reflectScrolledClipView(clip)
     }
     required init?(coder: NSCoder) { fatalError() }
     func present(on screen: NSScreen) {
@@ -64,7 +123,7 @@ final class ShelfController: NSWindowController {
         refresh(force: true); window?.makeKeyAndOrderFront(nil); window?.makeFirstResponder(canvas)
         dismissTimer?.invalidate(); dismissal = ShelfDismissalPolicy()
         updateDismissal()
-        let timer = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in self?.updateDismissal() }
+        let timer = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in self?.updateDismissal(); self?.autoScrollTowardPointer() }
         dismissTimer = timer; RunLoop.main.add(timer, forMode: .common)
         if outsideMonitor == nil {
             outsideMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] _ in self?.hideShelf() }
@@ -77,21 +136,26 @@ final class ShelfController: NSWindowController {
         }
     }
     func refresh(force: Bool = false) {
-        let files = store.files(); let next = files.map { "\($0.url.path):\($0.modified.timeIntervalSince1970):\($0.lastAccessed.timeIntervalSince1970)" }.joined(separator: "|")
+        let files = store.recentFiles(); let next = files.map { "\($0.url.path):\($0.modified.timeIntervalSince1970):\($0.lastAccessed.timeIntervalSince1970)" }.joined(separator: "|")
         guard force || next != signature else { return }; signature = next
         cards.subviews.forEach { $0.removeFromSuperview() }; empty.isHidden = !files.isEmpty
         canvas.layoutSubtreeIfNeeded()
-        let spacing: CGFloat = 24, cardWidth: CGFloat = 112
-        let total = CGFloat(files.count) * (cardWidth + spacing) - spacing
-        let available = scrollView.contentSize.width
-        cards.frame = NSRect(x: 0, y: 0, width: max(total + 16, available), height: 76)
-        let startX = max(8, (available - total) / 2)
+        // 左旧右新：最多同时显示 7 张，超出部分折叠在左侧，初始停在最新的一端。
+        let available = canvas.bounds.width - Self.foldGutter * 2 - 12 - 28
+        let visible = ShelfStripLayout.visibleCount(total: files.count, availableWidth: available)
+        stripWidth.constant = ShelfStripLayout.width(cards: visible)
+        canvas.layoutSubtreeIfNeeded()
+        let viewport = scrollView.contentSize.width
+        cards.frame = NSRect(x: 0, y: 0, width: max(ShelfStripLayout.width(cards: files.count), viewport), height: 76)
         for (index, file) in files.enumerated() {
-            let card = FileCard(file: file, frame: NSRect(x: startX + CGFloat(index) * (cardWidth + spacing), y: 0, width: cardWidth, height: 76))
+            let card = FileCard(file: file, frame: NSRect(x: ShelfStripLayout.cardX(index), y: 0, width: ShelfStripLayout.cardWidth, height: 76))
             card.onDragChanged = { [weak self] active in self?.dragActive = active; self?.updateDismissal() }
             card.onAccess = { [weak self] in self?.accessFile?(file.url) }
             card.open = { [weak self] in self?.openFile?(file.url) }; card.remove = { [weak self] in self?.deleteFile?(file.url) }; cards.addSubview(card)
         }
+        scrollView.contentView.scroll(to: NSPoint(x: ShelfStripLayout.newestOffset(total: files.count, viewport: viewport), y: 0))
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+        updateFoldLabels()
     }
     @objc private func showAddMenu() {
         guard let addMenu else { return }
@@ -112,6 +176,7 @@ final class ShelfController: NSWindowController {
         dismissTimer?.invalidate()
         if let outsideMonitor { NSEvent.removeMonitor(outsideMonitor) }
         if let localMonitor { NSEvent.removeMonitor(localMonitor) }
+        if let boundsObserver { NotificationCenter.default.removeObserver(boundsObserver) }
     }
 
 }

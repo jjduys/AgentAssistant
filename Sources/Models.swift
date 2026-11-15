@@ -35,6 +35,12 @@ final class FileStore {
                 return MountedFile(url: url, lastAccessed: accessHistory[url.lastPathComponent] ?? fallback)
             }.sorted { $0.lastAccessed == $1.lastAccessed ? $0.name < $1.name : $0.lastAccessed < $1.lastAccessed }
     }
+    /// 吊栏只展示最近 3 天内访问过的文件；更早的文件仍保留在存储目录中，不会被删除。
+    static let shelfRetention: TimeInterval = 3 * 24 * 60 * 60
+    func recentFiles(now: Date = Date(), within retention: TimeInterval = FileStore.shelfRetention) -> [MountedFile] {
+        let cutoff = now.addingTimeInterval(-retention)
+        return files().filter { $0.lastAccessed >= cutoff }
+    }
     func latestFile() -> MountedFile? { files().last }
     func recordAccess(_ url: URL, at date: Date = Date()) throws {
         var history = accessHistory
